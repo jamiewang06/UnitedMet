@@ -57,8 +57,12 @@ if __name__ == "__main__":
     # Results directory
     if cancer_type == 'ccRCC':
         sub_dir = ['CPTAC', 'CPTAC_val', 'RC18', 'RC20']  # notice that CPTAC is the first one
-        if imputation:
-            sub_dir = [imputation_dir] + sub_dir
+    elif cancer_type == 'PanCancer':
+        sub_dir = ['BrCa1', 'BrCa2', 'COAD', 'HCC', 'PDAC', 'PRAD', 'RC12', 'RC18', 'RC20']
+        
+    if imputation:
+        sub_dir = [imputation_dir] + sub_dir
+        
     proportions = list(repeat(0, len(sub_dir)))
     target = sub_dir.index(dir) + 1
     proportions[target - 1] = 1
@@ -74,7 +78,10 @@ if __name__ == "__main__":
 
 
     # -------------------------------------- Load and process MET and RNA data --------------------------------------
-    MET_RNA_map = pd.read_csv(f'{file_path}/data/MasterMapping_updated.csv', header=0, index_col='MetabID')
+    if cancer_type == 'PanCancer':
+        MET_RNA_map = pd.read_csv(f'{file_path}/data/MasterMapping_PanCancer.csv', header=0, index_col='MetabID')
+    else:
+        MET_RNA_map = pd.read_csv(f'{file_path}/data/MasterMapping_updated.csv', header=0, index_col='MetabID')
     met_data, metabolite_map, sample_map_met, met_batch_index_vector = load_met_data(met_matched_data_dir)
     if imputation:
         rna_data, batch_index_vector, gene_map, sample_map_rna, batch_map, batch_sizes, start_row, stop_row, \

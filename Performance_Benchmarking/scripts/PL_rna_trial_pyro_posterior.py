@@ -37,8 +37,12 @@ if __name__ == "__main__":
     # Results directory
     if cancer_type == 'ccRCC':
         sub_dir = ['CPTAC', 'CPTAC_val', 'RC18', 'RC20']  # notice that CPTAC is the first one
-        if imputation:
-            sub_dir = [imputation_dir] + sub_dir
+    elif cancer_type == 'PanCancer':
+        sub_dir = ['BrCa1', 'BrCa2', 'COAD', 'HCC', 'PDAC', 'PRAD', 'RC12', 'RC18', 'RC20']
+        
+    if imputation:
+        sub_dir = [imputation_dir] + sub_dir
+        
     target = sub_dir.index(dir) + 1
     plots_dir = f'{results_dir}/plots'
     embedding_dir = f'{results_dir}/embeddings'

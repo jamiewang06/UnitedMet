@@ -1,0 +1,47 @@
+#!/bin/bash
+
+pwd
+hostname
+date
+
+dataset_arg=$1
+
+# Load conda and active UnitedMet environment
+#TODO: configure with my environment
+conda_path="~/.bashrc"
+cd /data1/reznike/wangs13/UnitedMet
+
+# define job options
+job1="pyro_final"
+job2="posterior_final"
+
+# define run options
+script1="Performance_Benchmarking.scripts.PL_rna_trial_pyro"
+script2="Performance_Benchmarking.scripts.PL_rna_trial_pyro_posterior"
+
+#TODO: nsteps 1 just for testing, should change to 4000
+opts="--verbose_embeddings --n_steps 4000 --learning_rate 0.001"
+file_path="/data1/reznike/wangs13/UnitedMet/"
+rna_matched_data_dir="/data1/reznike/wangs13/UnitedMet/data/RNA_matched_PanCancer"
+met_matched_data_dir="/data1/reznike/wangs13/UnitedMet/data/MET_matched_PanCancer"
+#rna_imputation_data_dir="/data1/reznike/wangs13/UnitedMet/data/RNA_matched_imputation"
+results_dir="/data1/reznike/wangs13/UnitedMet/results_RNA_PanCancer_${dataset_arg}"
+
+ndims=30
+
+# submit trial jobs
+logs_dir="${results_dir}/logs"
+echo ${ndims}
+echo $(pwd)
+echo ${results_dir}
+mkdir -p ${results_dir} ${logs_dir}
+
+# ## TODO: configure conda environments (source conda, conda activate)
+jid1=$(sbatch --parsable -p componc_cpu -J "${job1}" -N 1 -n 1 -c 20 --mem=32G -t 2:30:00 -o ${logs_dir}/${job1}_%j.stdout -e ${logs_dir}/${job1}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script1} $opts -fp ${file_path} -ct PanCancer -d ${dataset_arg} -rd ${results_dir} -n ${ndims}")
+jid2=$(sbatch --parsable -p componc_cpu -J "${job2}" --depend=afterok:$jid1 -N 1 -n 1 -c 24 --mem=72G -t 0:24:00 -o ${logs_dir}/${job2}_%j.stdout -e ${logs_dir}/${job2}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script2} -ct PanCancer -d ${dataset_arg} -ve -rd ${results_dir}")
+
+echo "run options:"
+echo $opts
+echo "Starting job..."
+echo "The path is $PATH"
+echo "start time $(date)"
