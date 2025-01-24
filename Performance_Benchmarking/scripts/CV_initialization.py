@@ -54,7 +54,10 @@ if __name__ == "__main__":
     (rna_matched_data_dir, met_matched_data_dir, rna_imputation_data_dir, sub_dir, proportions,
      plots_dir, embedding_dir) = file_system_init(file_path, cancer_type, imputation, imputation_dir, target, results_dir)
     # Load a master file for mapping between RNA and MET data
-    MET_RNA_map = pd.read_csv(f'{file_path}/data/MasterMapping_updated.csv', header=0, index_col='MetabID')
+    if cancer_type == 'PanCancer':
+        MET_RNA_map = pd.read_csv(f'{file_path}/data/MasterMapping_PanCancer.csv', header=0, index_col='MetabID')
+    else:
+        MET_RNA_map = pd.read_csv(f'{file_path}/data/MasterMapping_updated.csv', header=0, index_col='MetabID')
 
     # -------------------------------------- MAIN ----------------------------------
     # Load MET and RNA data

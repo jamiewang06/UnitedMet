@@ -17,8 +17,11 @@ def file_system_init(file_path, cancer_type, imputation, imputation_dir, target,
     # Define results directory and other sub-directories inside it
     if cancer_type == 'ccRCC':
         sub_dir = ['CPTAC', 'CPTAC_val', 'RC18', 'RC20']  # notice that CPTAC is the first one
-        if imputation:
-            sub_dir = [imputation_dir] + sub_dir  # notice that imputation dir is placed the first one
+    elif cancer_type == 'PanCancer':
+        sub_dir = ['BrCa1', 'BrCa2', 'COAD', 'HCC', 'PDAC', 'PRAD', 'RC12', 'RC18', 'RC20']
+        
+    if imputation:
+        sub_dir = [imputation_dir] + sub_dir
     proportions = list(repeat(0, len(sub_dir)))
     proportions[target - 1] = 1
 
