@@ -5,6 +5,10 @@ hostname
 date
 
 dataset_arg=$1
+ndims_arg=$2
+
+echo ${dataset_arg}
+echo ${ndims_arg}
 
 # Load conda and active UnitedMet environment
 #TODO: configure with my environment
@@ -27,7 +31,7 @@ met_matched_data_dir="/data1/reznike/wangs13/UnitedMet/data/MET_matched_PanCance
 #rna_imputation_data_dir="/data1/reznike/wangs13/UnitedMet/data/RNA_matched_imputation"
 results_dir="/data1/reznike/wangs13/UnitedMet/results_RNA_PanCancer_${dataset_arg}"
 
-ndims=30
+ndims=${ndims_arg}
 
 # submit trial jobs
 logs_dir="${results_dir}/logs"
