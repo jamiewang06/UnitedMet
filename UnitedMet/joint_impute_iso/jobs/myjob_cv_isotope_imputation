@@ -1,0 +1,70 @@
+#!/bin/bash
+
+pwd
+hostname
+date
+
+# Load conda and active UnitedMet environment
+conda_path="/usersoftware/resnike/xiea1/anaconda/etc/profile.d/conda.sh"
+cd /data1/reznike/xiea1/pyro
+
+cancer_type="NSCLC_human"
+imputation=true
+imputation_dir="LUAD"
+
+job1="init"
+job2="pyro"
+job3="posterior"
+job4="summary"
+script1="scripts_isotope.CV_initialization_isotope"
+script2="scripts_isotope.CV_pyro"
+script3="scripts_isotope.CV_posterior"
+script4="scripts_isotope.CV_summarization"
+
+cv_opts="--crossval_dims 1 102 --crossval_steps 10 --crossval_folds 10"
+svi_opts="--n_steps 2000 --learning_rate 0.001"
+other_opts="--imputation --imputation_dir ${imputation_dir}" 
+# calculate number of jobs in the job array, n_indices = n_folds * len(n_dims_options)
+n_indices=110
+# add following arguments direct in the bsub command (not in the cv_opts)
+# add --remove_solo
+# add --tumor_only
+# add --imputation
+# add --imputation_dir ${imputation_dir}
+
+# the number of iterations to randomly select held-out metabolites
+f_test_prop=1
+file_path="/data1/reznike/xiea1/MetabolicModel"
+
+
+# define sub_dir and results_dir
+if [[ $imputation == true ]]; then
+  sub_dir=("${imputation_dir}")
+  parent_dir="/data1/reznike/xiea1/MetabolicModel/results_RNA_imputation"
+fi
+
+
+# submit trial jobs
+for i in "${!sub_dir[@]}"; do
+  target=$((i + 1))
+  dir=${sub_dir[$i]}
+  results_dir="${parent_dir}/${dir}"
+  logs_dir="${results_dir}/logs"
+  echo $(pwd)
+  echo ${target}
+  echo ${results_dir}
+  echo ${logs_dir}
+  mkdir -p ${results_dir} ${logs_dir}
+  # The first job of CV_initialization only needs to be run once. It will empty existing cv scores files.
+  jid1=$(sbatch --parsable -p componc_cpu -J "${job1}_${dir}" -N 1 -n 1 -c 10 --mem=10G -t 0:15:00 -o ${logs_dir}/${job1}_%j.stdout -e ${logs_dir}/${job1}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script1} ${cv_opts} ${other_opts} -ct ${cancer_type} -d ${dir} -fp ${file_path} -rd ${results_dir} -f ${f_test_prop}")
+  jid2=$(sbatch --parsable -p componc_cpu -J "${job2}_${dir}" --array=1-${n_indices} --depend=afterok:$jid1 -N 1 -n 1 -c 20 --mem=20G -t 1:59:00 -o ${logs_dir}/${job2}_%j.stdout -e ${logs_dir}/${job2}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script2} -rd ${results_dir} ${cv_opts} ${svi_opts}")
+  jid3=$(sbatch --parsable -p componc_cpu -J "${job3}_${dir}" --array=1-${n_indices} --depend=afterok:$jid2 -N 1 -n 1 -c 24 --mem=96G -t 0:30:00 -o ${logs_dir}/${job3}_%j.stdout -e ${logs_dir}/${job3}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script3} -rd ${results_dir} ${cv_opts}")
+  sbatch -p componc_cpu -J "${job4}_${dir}" --depend=afterok:$jid3 -N 1 -n 1 -c 10 --mem=10G -t 0:15:00 -o ${logs_dir}/${job4}_%j.stdout -e ${logs_dir}/${job4}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script4} -rd ${results_dir} ${cv_opts}"
+done
+
+
+echo "cv options:"
+echo $opts
+echo "Starting job..."
+echo "THe path is $PATH"
+echo "start time $(date)"

@@ -1,0 +1,60 @@
+#!/bin/bash
+
+pwd
+hostname
+date
+
+# Load conda and active UnitedMet environment
+conda_path="/usersoftware/resnike/xiea1/anaconda/etc/profile.d/conda.sh"
+cd /data1/reznike/xiea1/pyro
+
+cancer_type="NSCLC_human"
+imputation=true
+imputation_dir="LUAD"
+
+# define job options
+job1="pyro_final"
+job2="posterior_final"
+
+# define run options
+script1="scripts_isotope.PL_rna_trial_pyro_isotope"
+script2="scripts_isotope.PL_rna_trial_pyro_posterior_isotope"
+f_test_prop=1
+file_path="/data1/reznike/xiea1/MetabolicModel"
+opts="--feature_test_prop ${f_test_prop} --verbose_embeddings --n_steps 4000 --learning_rate 0.001"
+other_opts="--imputation --imputation_dir ${imputation_dir}" 
+ndims_dir=(11)
+
+# add following arguments to opts 
+# remove --remove_solo
+# remove --tumor_only
+# remove --imputation
+# remove --imputation_dir ${imputation_dir}
+
+# define sub_dir and results_dir
+if [[ $imputation == true ]]; then
+  sub_dir=("${imputation_dir}")
+  parent_dir="/data1/reznike/xiea1/MetabolicModel/results_RNA_imputation"
+fi
+
+#sub_dir=("RC18")
+# submit trial jobs
+for i in "${!sub_dir[@]}"; do
+  ndims=${ndims_dir[i]}
+  #ndims=141
+  dir=${sub_dir[$i]}
+  results_dir="${parent_dir}/${dir}"
+  logs_dir="${results_dir}/logs"
+  echo ${ndims}
+  echo $(pwd)
+  echo ${results_dir}
+  mkdir -p ${results_dir} ${logs_dir}
+  jid1=$(sbatch --parsable -p componc_cpu -J "${job1}_${dir}" -N 1 -n 1 -c 20 --mem=20G -t 2:30:00 -o ${logs_dir}/${job1}_%j.stdout -e ${logs_dir}/${job1}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script1} $opts ${other_opts} -ct ${cancer_type} -d ${dir} -rd ${results_dir} -n ${ndims} -fp ${file_path}")
+  jid2=$(sbatch --parsable -p componc_cpu -J "${job2}_${dir}" --depend=afterok:$jid1 -N 1 -n 1 -c 24 --mem=72G -t 0:15:00 -o ${logs_dir}/${job2}_%j.stdout -e ${logs_dir}/${job2}_%j.stderr --wrap="source ${conda_path};conda activate UnitedMet;python3 -m ${script2} -f ${f_test_prop} -ve ${other_opts} -ct ${cancer_type} -d ${dir} -rd ${results_dir}")
+done
+
+echo "run options:"
+echo $opts
+echo "Starting job..."
+echo "THe path is $PATH"
+echo "start time $(date)"
