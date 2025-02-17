@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
+import pickle
 from statsmodels.stats.multitest import multipletests
 
 def count_obs(data, n_batch, J, batch_index_vector):
@@ -31,33 +32,54 @@ def order_and_rank(data, n_obs, N, J, n_batch, batch_index_vector):
         # offset = offset + data[batch_index_vector == b].shape[0]
     return orders, ranks
 
-def test_train_split_met_rna(met_data, start_row, stop_row, target, n_obs, ranks, f_test_prop):
+def test_train_split_met_rna(met_data, start_row, stop_row, targets, n_obs, ranks, f_test_prop, targets_test_feature_indices_pre):
     """
     testing and training sets are only metabolomics data.
     """
-    test_sample_indices = np.arange(start_row[target-1], stop_row[target-1])
+    
     training = np.copy(met_data)
+    testing = np.full(training.shape, np.nan)
+    targets_test_sample_indices = []
+    targets_test_feature_indices = []
+
+    len_available = 0
     # Mask all metabolite data of the target batch in the training set
     # training and testing set only have metabolomics data
-    training[test_sample_indices, :] = np.nan
+    
+    for i, target in enumerate(targets):
+        test_sample_indices = np.arange(start_row[target-1], stop_row[target-1])
+        test_feature_indices = np.array(targets_test_feature_indices_pre[i])
+        ixgrid = np.ix_(test_sample_indices, test_feature_indices)
 
-    solo = np.all(np.isnan(training), axis=0)
-    missing = np.all(np.isnan(met_data[test_sample_indices, :]), axis=0)
-    available_features = np.arange(met_data.shape[1])[(~missing) & (~solo)]
-    len_available = len(available_features)
-    test_feature_indices = np.random.choice(available_features,
-                                            size=int(round(f_test_prop * len(available_features))), replace=False)
-    # sort the indices in ascending order
-    test_sample_indices = np.sort(test_sample_indices)
-    test_feature_indices = np.sort(test_feature_indices)
-    # Reset the n_obs, all metabolites in the target batch are set to 0
-    n_obs[target - 1, :met_data.shape[1]] = 0
-    testing = np.full(training.shape, np.nan)
-    for sidx in test_sample_indices:
-        for fidx in test_feature_indices:
-            testing[sidx, fidx] = ranks[sidx, fidx]
+        training[ixgrid] = np.nan
+        print("test samples", test_sample_indices)
+        print("test features", test_feature_indices)
+        print("training: ", training)
+        solo = np.all(np.isnan(training[:, test_feature_indices]), axis=0) # test features that are not measured in other batches
+        missing = np.all(np.isnan(met_data[ixgrid]), axis=0) # test features missing in target batch
+        #available_features = np.arange(met_data.shape[1])[(~missing) & (~solo)]
+        available_test_features = test_feature_indices[(~missing) & (~solo)]
+        print("available test features: ", available_test_features)
+        len_available += len(available_test_features)
+        test_feature_indices = np.random.choice(available_test_features,
+                                                size=int(round(f_test_prop * len(available_test_features))), replace=False)
+        # sort the indices in ascending order
+        test_sample_indices = np.sort(test_sample_indices)
+        test_feature_indices = np.sort(test_feature_indices)
+        
+        targets_test_sample_indices.append(test_sample_indices)
+        targets_test_feature_indices.append(test_feature_indices)
+        # Reset the n_obs, all test metabolites in the target batch are set to 0
+        n_obs[target - 1, test_feature_indices] = 0
+        for sidx in test_sample_indices:
+            for fidx in test_feature_indices:
+                testing[sidx, fidx] = ranks[sidx, fidx]
+        
+    print("na in training", np.sum(np.isnan(training)), training.size)
+    print("not na in testing", np.sum(~np.isnan(testing)), testing.size)
+    print("total available:", len_available)
 
-    return testing, training, n_obs, test_sample_indices, test_feature_indices, len_available
+    return testing, training, n_obs, targets_test_sample_indices, targets_test_feature_indices, len_available
 
 def split_folds_across_isotope(data, n_batch, batch_index_vector, n_folds):  # modified for isotope
     """
@@ -115,6 +137,13 @@ def smart_perm_2D(x, permutation):
         ValueError("Only 2 dimension expected")
     return x_permuted
 
+def load_joint_targets_test_features(file_path, cancer_type):
+    target_feature_dir = f"{file_path}/data/{cancer_type}_features.pkl"
+    with open(target_feature_dir, "rb") as file:
+        target_1_test_features, target_2_test_features = pickle.load(file)
+    
+    return [target_1_test_features, target_2_test_features]
+
 def saving_data_for_pyro_posterior(embedding_dir, N, K, J, met_names, start_row, stop_row, batch_sizes):
     with open(f'{embedding_dir}/data_for_posterior_pyro.npy', 'wb') as f:  # 'wb': write as binary
         np.save(f, N)  # save arrays in numpy binary .npy files
@@ -126,11 +155,12 @@ def saving_data_for_pyro_posterior(embedding_dir, N, K, J, met_names, start_row,
         f.close()
     pd.DataFrame({'met_names': met_names}).to_csv(f'{embedding_dir}/met_names_pyro.csv')
 
-def saving_data_for_testing(embedding_dir, testing, test_sample_indices, test_feature_indices, n_obs_pre, censor_indicator):
+def saving_data_for_testing(embedding_dir, testing, targets_test_sample_indices, targets_test_feature_indices, n_obs_pre, censor_indicator, targets):
     with open(f'{embedding_dir}/data_for_testing_pyro.npy', 'wb') as f:  # 'wb': write as binary
         np.save(f, testing)
-        np.save(f, test_sample_indices)
-        np.save(f, test_feature_indices)
+        for i in range(len(targets)): #store each array separately since of potentially different lengths
+            np.save(f, targets_test_sample_indices[i])
+            np.save(f, targets_test_feature_indices[i])
         np.save(f, n_obs_pre)
         np.save(f, censor_indicator)
         f.close()

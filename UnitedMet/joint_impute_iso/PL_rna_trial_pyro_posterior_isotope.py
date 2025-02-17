@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 import argparse
-from Performance_Benchmarking.scripts_isotope.pyro_model import pyro_posterior
-from Performance_Benchmarking.scripts_isotope.testing import testing_function_met_rna, results_analysis, results_visualization, results_probabilistic_analysis
+from UnitedMet.joint_impute_iso.pyro_model import pyro_posterior
+from UnitedMet.joint_impute_iso.testing import testing_function_met_rna, results_analysis, results_visualization, results_probabilistic_analysis
 
 if __name__ == "__main__":
     ############################################################# Parse command-line options & arguments
@@ -18,16 +18,16 @@ if __name__ == "__main__":
                         required=False, action='store_true', default=False)
     parser.add_argument('-id', '--imputation_dir', help="dir for imputation ", required=False, type=str, default='TCGA')
     parser.add_argument('-ct', '--cancer_type', help="which cancer type is datasets from", required=False, type=str, default='ccRCC')
-    parser.add_argument('-d', '--directory', help="which dataset to impute", required=False, type=str, default='RC18')
+    parser.add_argument('-d', '--directories', help="which datasets to jointly impute", required=False, nargs="+", type=str, default=["NSCLC_G6_1", "NSCLC_Q6_2"])
     parser.add_argument('-rd', '--results_directory', help="the path of the results directory", required=False, type=str,
-                        default="/juno/work/reznik/xiea1/MetabolicModel/results_RNA_ccRCC/RC18")
+                        default="/data1/reznike/wangs13/UnitedMet/results_RNA_joint_benchmark")
     args = parser.parse_args()
     f_test_prop = args.feature_test_prop
     ve = args.verbose_embeddings
     imputation = args.imputation
     imputation_dir = args.imputation_dir
     cancer_type = args.cancer_type
-    dir = args.directory
+    dirs = args.directories
     results_dir = args.results_directory
 
     # ----------------------- Initialize Variables/Directories/Files -----------------------
@@ -54,9 +54,11 @@ if __name__ == "__main__":
         sub_dir = ['NSCLC_G24_1', 'NSCLC_G24_2']
     elif cancer_type == 'NSCLC_Q24':  # NSCLC glutamine tracer 24h
         sub_dir = ['NSCLC_Q24_1', 'NSCLC_Q24_2']
+    elif cancer_type == 'NSCLC_joint6':
+        sub_dir = ['NSCLC_joint6_1', 'NSCLC_joint6_2']
     else:
         raise ValueError(f"Invalid cancer type: {cancer_type}")
-    target = sub_dir.index(dir) + 1
+    targets = [sub_dir.index(dir) + 1 for dir in dirs]    
     plots_dir = f'{results_dir}/plots'
     embedding_dir = f'{results_dir}/embeddings'
 
@@ -73,10 +75,16 @@ if __name__ == "__main__":
     met_names = pd.read_csv(f'{embedding_dir}/met_names_pyro.csv')['met_names'].values
 
     if not imputation:
+        targets_test_sample_indices = []
+        targets_test_feature_indices = []
+
         with open(f'{embedding_dir}/data_for_testing_pyro.npy', 'rb') as f:
             testing = np.load(f)
-            test_sample_indices = np.load(f)
-            test_feature_indices = np.load(f)
+            
+            for i in range(len(targets)): #store each array separately since of potentially different lengths
+                targets_test_sample_indices.append(np.load(f))
+                targets_test_feature_indices.append(np.load(f))
+                
             n_obs_pre = np.load(f)
             censor_indicator = np.load(f)
             f.close()
@@ -96,16 +104,25 @@ if __name__ == "__main__":
     # ------------------------Testing and Results Analysis------------------------
     if not imputation:
         # note that here we directly store results in the actual_pred_res_df, because n_iter = 1
-        actual_pred_res_df = testing_function_met_rna(testing, rank_hat_mean, rank_hat_std,
-                                      test_sample_indices, test_feature_indices,
-                                      n_obs_pre, met_names, censor_indicator, job_index, target, f_test_prop)
-        actual_pred_res_df.to_csv(f'{results_dir}/actual_vs_predicted_ranks.csv')
-        by_iter_rho, median_rho_iter, median_rho_feature = results_analysis(actual_pred_res_df, batch_sizes, target, num_samples=1000)
-        median_rho_feature.to_csv(f'{results_dir}/median_rho_feature.csv')
-        results_visualization(median_rho_feature, median_rho_iter, actual_pred_res_df, f_test_prop, target, sub_dir,
-                              plots_dir)
-        results_probabilistic_analysis(actual_pred_res_df, testing, rank_hat_draws, test_feature_indices,
-                                       test_sample_indices, n_obs_pre, target, median_rho_feature, plots_dir, sub_dir)
+        for i, target in enumerate(targets):
+            target_name = sub_dir[target-1] #index across all batches
+            target_plots_dir = f'{plots_dir}_{target_name}'
+            print(targets_test_sample_indices, targets_test_feature_indices)
+            test_sample_indices = targets_test_sample_indices[i] #not all batches, only target batches
+            test_feature_indices = targets_test_feature_indices[i]
+            print(test_sample_indices, test_feature_indices)
+            print(testing.shape)
+            print(f'Results Analysis for {target_name}')
+            actual_pred_res_df = testing_function_met_rna(testing, rank_hat_mean, rank_hat_std,
+                                        test_sample_indices, test_feature_indices,
+                                        n_obs_pre, met_names, censor_indicator, job_index, target, f_test_prop)
+            actual_pred_res_df.to_csv(f'{results_dir}/actual_vs_predicted_ranks_{target_name}.csv')
+            by_iter_rho, median_rho_iter, median_rho_feature = results_analysis(actual_pred_res_df, batch_sizes, target, num_samples=1000)
+            median_rho_feature.to_csv(f'{results_dir}/median_rho_feature_{target_name}.csv')
+            results_visualization(median_rho_feature, median_rho_iter, actual_pred_res_df, f_test_prop, target, sub_dir,
+                                target_plots_dir)
+            results_probabilistic_analysis(actual_pred_res_df, testing, rank_hat_draws, test_feature_indices,
+                                        test_sample_indices, n_obs_pre, target, median_rho_feature, target_plots_dir, sub_dir)
 
 
 

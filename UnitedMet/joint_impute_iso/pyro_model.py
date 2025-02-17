@@ -61,6 +61,45 @@ class PlackettLuce_2D(TorchDistribution):
         # sum over the observed values in all columns of samples
         logp = logp_matrix[mask].sum()
         return logp
+    
+class PlackettLuce_2D_weighted(TorchDistribution):
+    """
+        Plackett-Luce distribution for 2D permutation matrix (logits)
+    """
+    arg_constraints = {"logits": constraints.real, "n_obs": constraints.nonnegative_integer}
+    def __init__(self, logits, n_obs, n_mets, n_genes):
+        # last dimension is for scores of plackett luce
+        self.logits = logits
+        self.n_obs = n_obs
+        self.n_mets = n_mets
+        self.n_genes = n_genes
+        self.size = self.logits.size()
+        super(PlackettLuce_2D_weighted, self).__init__()
+
+    def sample(self, num_samples=1):
+        # sample permutations using Gumbel-max trick to avoid cycles
+        with torch.no_grad():
+            u = torch.distributions.utils.clamp_probs(torch.rand_like(self.logits))
+            z = self.logits - torch.log(-torch.log(u))
+            samples = torch.sort(z, descending=True, stable=True, dim=0)[1]  # return the indices of the sorted values
+        return samples
+
+    def log_prob(self, orders):
+        # orders (2 d permutation, the indices of the sorted values from largest to smallest)
+        assert self.size == orders.size()
+        logits = smart_perm_2D(self.logits, orders)
+        logp_matrix = (logits - torch.flip(torch.logcumsumexp(torch.flip(logits, dims=(0, )), dim=0), dims=(0, )))
+        # get mask for observed values
+        mask = torch.arange(orders.shape[0]).unsqueeze(1).expand(orders.shape[0], orders.shape[1]) < \
+               self.n_obs.view(1, orders.shape[1])
+        # create the weights matrix for metabolites and genes
+        weights = torch.zeros_like(logp_matrix)
+        weights[:, :self.n_mets] = 1  # metabolites
+        weights[:, self.n_mets:] = self.n_mets/self.n_genes  # genes
+        weighted_logp_matrix = logp_matrix * weights
+        # sum over the observed values in all columns of samples
+        logp = weighted_logp_matrix[mask].sum()
+        return logp
 
 def run_pyro_svi(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_steps=2000, lr=0.001):
     orders = torch.tensor(orders)
@@ -90,6 +129,49 @@ def run_pyro_svi(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_steps=2
     loss_list = []
     for step in tqdm.trange(n_steps):
         loss = svi.step(N, J, K, n_batch, start_row, stop_row, n_obs, orders)
+        loss_list.append(loss)
+        if step % 100 == 0:
+            print("step {}: loss = {}".format(step, loss))
+        if step > 0:
+            if (np.abs(loss - loss_list[-2]) <= tol_e):
+                print("Converged at step {}".format(step))
+                break
+
+    W_loc = pyro.param("AutoNormal.locs.W").detach().numpy()
+    W_scale = pyro.param("AutoNormal.scales.W").detach().numpy()
+    H_loc = pyro.param("AutoNormal.locs.H").detach().numpy()
+    H_scale = pyro.param("AutoNormal.scales.H").detach().numpy()
+
+    return W_loc, W_scale, H_loc, H_scale, loss_list
+
+def run_pyro_svi_weighted(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_mets, n_genes, n_steps=2000, lr=0.001):
+    orders = torch.tensor(orders)
+    n_obs = torch.tensor(n_obs)
+    pyro.set_rng_seed(42)
+    pyro.clear_param_store()
+
+    # 2D Plackett Luce distribution version
+    # torch.full((K, J), 10)
+    def model(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_mets, n_genes):
+        W = pyro.sample('W', dist.Normal(torch.zeros(N, K), torch.ones(N, K)).to_event(2))
+        H = pyro.sample('H', dist.Normal(torch.zeros(K, J), torch.ones(K, J)).to_event(2))
+        X = torch.mm(W, H)
+
+        for b in range(n_batch):
+            X_temp = X[start_row[b]:stop_row[b], :]
+            temp_order = orders[start_row[b]:stop_row[b], :]
+            pyro.sample("R_{}".format(b), PlackettLuce_2D_weighted(X_temp, n_obs[b, :], n_mets, n_genes), obs=temp_order)
+
+    # pyro.render_model(model, model_args=(N, J, K, n_batch, start_row, stop_row, n_obs, orders), filename="model.pdf")
+    guide = AutoNormal(poutine.block(model, expose=['W', 'H']))
+    # run inference
+    optimizer = Adam({"lr": lr, 'betas': [0.95, 0.999]})
+    svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+
+    tol_e = 0.01
+    loss_list = []
+    for step in tqdm.trange(n_steps):
+        loss = svi.step(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_mets, n_genes)
         loss_list.append(loss)
         if step % 100 == 0:
             print("step {}: loss = {}".format(step, loss))

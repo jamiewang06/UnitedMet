@@ -1,8 +1,8 @@
 import torch
 import argparse
-from Performance_Benchmarking.scripts_isotope.data_processing_isotope import *
-from Performance_Benchmarking.scripts_isotope.pyro_model import generate_pyro_data, run_pyro_svi, svi_loss
-from Performance_Benchmarking.scripts_isotope.utils_isotope import test_train_split_met_rna, saving_data_for_pyro_posterior, saving_data_for_testing
+from UnitedMet.joint_impute_iso.data_processing_isotope import *
+from UnitedMet.joint_impute_iso.pyro_model import generate_pyro_data, run_pyro_svi_weighted, svi_loss
+from UnitedMet.joint_impute_iso.utils_isotope import test_train_split_met_rna, saving_data_for_pyro_posterior, saving_data_for_testing
 
 if __name__ == "__main__":
     ############################################################# Parse command-line options & arguments
@@ -28,12 +28,12 @@ if __name__ == "__main__":
     parser.add_argument('-im', '--imputation', help='Whether to do imputation without reference or not (benchmarking)',
                         required=False, action='store_true', default=False)
     parser.add_argument('-id', '--imputation_dir', help="dir for imputation ", required=False, default="TCGA", type=str)
-    parser.add_argument('-ct', '--cancer_type', help="which cancer type is datasets from", required=False, default="ccRCC", type=str)
-    parser.add_argument('-d', '--directory', help="which dataset to impute", required=False, type=str, default="RC18")
+    parser.add_argument('-ct', '--cancer_type', help="which cancer type is datasets from", required=False, default="NSCLC_joint6", type=str)
+    parser.add_argument('-d', '--directories', help="which datasets to jointly impute", required=False, nargs="+", type=str, default=["NSCLC_joint6_1", "NSCLC_joint6_2"])
     parser.add_argument('-rd', '--results_directory', help="the path of the results directory", required=False,
-                        type=str, default="/data1/reznike/xiea1/MetabolicModel/results_RNA_ccRCC/RC18")
+                        type=str, default="/data1/reznike/wangs13/UnitedMet/results_RNA_joint_benchmark")
     parser.add_argument('-fp', '--file_path', help="the path of the parent directory to read/save all files",
-                        required=False, type=str, default="/data1/reznike/xiea1/MetabolicModel")
+                        required=False, type=str, default="/data1/reznike/wangs13/UnitedMet")
 
     # Parsing arguments from command lines
     args = parser.parse_args()
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     imputation = args.imputation
     imputation_dir = args.imputation_dir
     cancer_type = args.cancer_type
-    dir = args.directory
+    dirs = args.directories
     results_dir = args.results_directory
     file_path = args.file_path
 
@@ -55,12 +55,17 @@ if __name__ == "__main__":
     # Don't launch job arrays anymore (only 1 trial needed).
     seed = 42
     # Input Metabolomics and Transcriptomics data directory
+    print(imputation, args.imputation)
     rna_matched_data_dir, met_matched_data_dir, rna_imputation_data_dir, sub_dir, proportions, \
-    plots_dir, embedding_dir, target = file_system_init_isotope(file_path, cancer_type, imputation, imputation_dir, dir, results_dir)
+    plots_dir, embedding_dir, targets = file_system_init_isotope(file_path, cancer_type, imputation, imputation_dir, dirs, results_dir)
 
 
     # -------------------------------------- Load and process MET and RNA data --------------------------------------
-    met_data, metabolite_map, sample_map_met, met_batch_index_vector = load_met_data_isotope(met_matched_data_dir, tumor_only)
+    if imputation:
+        met_data, metabolite_map, sample_map_met, met_batch_index_vector = load_met_data_isotope(met_matched_data_dir, tumor_only, imputation)
+    else: #benchmarking
+        met_data, metabolite_map, sample_map_met, met_batch_index_vector, targets_test_feature_indices_pre = load_met_data_isotope(met_matched_data_dir, tumor_only, imputation, cancer_type, file_path)
+        
     if imputation:
         rna_data, batch_index_vector, gene_map, sample_map_rna, batch_map, batch_sizes, start_row, stop_row, \
         s_test_prop_settings, n_batch = load_rna_data_isotope(rna_matched_data_dir, tumor_only, proportions,
@@ -84,11 +89,11 @@ if __name__ == "__main__":
     n_obs_pre = np.copy(n_obs)  # save the n_obs of the original data
     if not imputation:
         np.random.seed(seed)
-        testing, training, n_obs, test_sample_indices, test_feature_indices, len_available = test_train_split_met_rna(
-            met_data, start_row, stop_row, target, n_obs, ranks, f_test_prop)  # updated n_obs specify the training set
+        testing, training, n_obs, targets_test_sample_indices, targets_test_feature_indices, len_available = test_train_split_met_rna(
+            met_data, start_row, stop_row, targets, n_obs, ranks, f_test_prop, targets_test_feature_indices_pre)  # updated n_obs specify the training set
 
     torch.manual_seed(seed)
-    W_loc, W_scale, H_loc, H_scale, loss_list = run_pyro_svi(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_steps, lr)
+    W_loc, W_scale, H_loc, H_scale, loss_list = run_pyro_svi_weighted(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_steps, lr)
     #W_loc, W_scale, H_loc, H_scale, loss_list = run_pyro_svi_alter(N, J, K, n_batch, start_row, stop_row, n_obs, orders, n_steps, lr, n_iter=5)
     svi_loss(loss_list, plots_dir)  # plot the loss function of the model
 
@@ -101,5 +106,5 @@ if __name__ == "__main__":
 
     saving_data_for_pyro_posterior(embedding_dir, N, K, J, met_names, start_row, stop_row, batch_sizes)
     if not imputation:
-        saving_data_for_testing(embedding_dir, testing, test_sample_indices, test_feature_indices, n_obs_pre, censor_indicator)
+        saving_data_for_testing(embedding_dir, testing, targets_test_sample_indices, targets_test_feature_indices, n_obs_pre, censor_indicator, targets)
 

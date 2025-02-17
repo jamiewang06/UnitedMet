@@ -2,8 +2,9 @@ import numpy as np
 import os
 import pandas as pd
 from itertools import repeat
+from UnitedMet.joint_impute_iso.utils_isotope import load_joint_targets_test_features
 
-def file_system_init_isotope(file_path, cancer_type, imputation, imputation_dir, dir, results_dir):  # modified for isotope
+def file_system_init_isotope(file_path, cancer_type, imputation, imputation_dir, dirs, results_dir):  # modified for isotope
     # Input Metabolomics and Transcriptomics data directory
     rna_matched_data_dir = f"{file_path}/data/RNA_matched_{cancer_type}"
     met_matched_data_dir = f"{file_path}/data/MET_matched_{cancer_type}"
@@ -34,22 +35,32 @@ def file_system_init_isotope(file_path, cancer_type, imputation, imputation_dir,
         sub_dir = ['NSCLC_G24_1', 'NSCLC_G24_2']
     elif cancer_type == 'NSCLC_Q24':  # NSCLC glutamine tracer 24h
         sub_dir = ['NSCLC_Q24_1', 'NSCLC_Q24_2']
+    elif cancer_type == 'NSCLC_joint6':
+        sub_dir = ['NSCLC_joint6_1', 'NSCLC_joint6_2'] #double check if these have any overlapping samples or if they are the same split
     else:
         raise ValueError(f"Invalid cancer type: {cancer_type}")
+    
     proportions = list(repeat(0, len(sub_dir)))
-    target = sub_dir.index(dir) + 1
-    proportions[target - 1] = 1
+    targets = [sub_dir.index(dir) + 1 for dir in dirs]
+    print(targets)
+    for t in targets:
+        proportions[t - 1] = 1
+    print(sub_dir, proportions)
 
     plots_dir = f'{results_dir}/plots'
     embedding_dir = f'{results_dir}/embeddings'
+    
+    makedirs_list = [plots_dir,  embedding_dir]
+    makedirs_list += [f'{plots_dir}_{sub_dir[target-1]}' for target in targets]
 
-    for dir in [plots_dir,  embedding_dir]:
+    for dir in makedirs_list:
         try:
             os.makedirs(dir)
         except FileExistsError:
             print(f"Directory '{dir}' already exists.")
+            
     return rna_matched_data_dir, met_matched_data_dir, rna_imputation_data_dir, sub_dir, proportions, \
-            plots_dir,  embedding_dir, target
+            plots_dir,  embedding_dir, targets
 
 def tic_normalization_across(data, batch_index_vector):
     normalized_data = np.copy(data)  # Note that, when we modify data, normalized_data changes
@@ -203,7 +214,7 @@ def filter_solo_met_data(met_data, n_batch, start_row, stop_row):
     return met_data
 
 
-def load_met_data_isotope(matched_data_dir, tumor_only):  # modified for isotope
+def load_met_data_isotope(matched_data_dir, tumor_only, imputation, cancer_type=None, file_path=None):  # modified for isotope
     """
     When imputation, the loaded rna data will have one more batch than the loaded met data.
     """
@@ -236,13 +247,31 @@ def load_met_data_isotope(matched_data_dir, tumor_only):  # modified for isotope
         df = pd.read_csv(f'{matched_data_dir}/{fpath}', header=0, index_col=0)
         for feature in df.columns:  # fill in the data by feature columns
             fidx = feature_map[feature]
+            print(feature, fidx)
             data[sidx:sidx + df.shape[0], fidx] = df[
                 feature].values  # df.values: Return a Numpy representation without axes labels
         batch_index_vector[sidx:sidx + df.shape[
             0]] = batch_idx  # [start, stop) For both dataframes and lists, df[i:j] or list[i:j] include ith but not jth item
         sidx += df.shape[0]  # so the index need to be start:start+number
         batch_idx += 1
-    return data, feature_map, sample_map, batch_index_vector
+    
+    if imputation:
+        return data, feature_map, sample_map, batch_index_vector
+    
+    else: #benchmarking
+        targets_test_features = load_joint_targets_test_features(file_path, cancer_type) # get test feature columns for each target
+        targets_test_feature_indices = [] # test feature indices for each target
+        
+        for target_test_features in targets_test_features:
+            target_test_feature_indices = []
+            
+            for feature in target_test_features:
+                fidx = feature_map[feature] # get feature index
+                target_test_feature_indices.append(fidx)
+            
+            targets_test_feature_indices.append(target_test_feature_indices)
+            
+        return data, feature_map, sample_map, batch_index_vector, targets_test_feature_indices
 
 def load_rna_data_isotope(matched_data_dir, tumor_only, proportions, imputation, imputation_dir=None, rna_imputation_data_dir=None):
     """
@@ -317,7 +346,7 @@ def load_rna_data_isotope(matched_data_dir, tumor_only, proportions, imputation,
     s_test_prop_settings = pd.DataFrame(list(zip(batch_names, proportions)), columns=["batches",
                                                                                       "s_test_prop"])  # zip() create paired tuples, need to use list/tuple() to display zip object
     n_batch = len(batch_map)
-    print("The target dataset is assigned as follows ('1' indicates the target):")
+    print("The target datasets are assigned as follows ('1' indicates the target):")
     print(s_test_prop_settings)
 
     return data, batch_index_vector, feature_map, sample_map, batch_map, batch_sizes, start_row, stop_row, s_test_prop_settings, n_batch
